@@ -6,8 +6,8 @@ This bot allows users to save, manage, and share memorable quotes from your Disc
 
 1. **Quote Saving:**
 
-   - **Reaction-Based:** Users can save a Discord message as a quote by reacting to the message with a designated emoji (configurable, defaults to 💬).  This works reliably for messages sent *after* the bot has connected to Discord.
-   - **Manual Addition:**  A `/manual_add` slash command allows users to add quotes by providing a direct Discord message link. This is the recommended method for adding older messages.
+   - **Reaction-Based:** Users can save a Discord message as a quote by reacting to the message with a designated emoji (configurable, defaults to 💬). 
+   - **Manual Addition:**  A `/manual_add` slash command allows users to add quotes by providing a direct Discord message link. This might be useful for really old messages.
    - **Bot Message Prevention:** The bot will not add quotes from messages authored by other bots.
 
 2. **Quote Retrieval:**
