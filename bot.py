@@ -2,9 +2,9 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import asyncio
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, time, timezone
 import dateutil.parser
-
+from fuzzywuzzy import fuzz
 
 from config import BOT_TOKEN, REACTION_EMOJI, ADMIN_ROLE_NAME, WEEKLY_QUOTE_CHANNEL_ID, AUTHOR_REPEAT_PREVENTION
 import database
@@ -26,7 +26,6 @@ async def format_quote_embed(quote):
     embed.set_author(name=author_name, url=jump_url)
     return embed
 
-
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name} (ID: {bot.user.id})")
@@ -37,86 +36,70 @@ async def on_ready():
     except Exception as e:
         print(e)
     print("------")
-
-    # --- Fetch recent messages in each channel ---
-    print("Fetching recent messages...")
-    for guild in bot.guilds:
-        for channel in guild.text_channels:  # Only text channels
-            if channel.permissions_for(guild.me).read_message_history:  # check permissions
-                try:
-                    async for message in channel.history(limit=200):  # Fetch up to 200 recent messages
-                        pass  # We just need to iterate to load them into the cache
-                    print(f"  Fetched messages in {channel.name} (Guild: {guild.name})")
-                except discord.Forbidden:
-                    print(f"  No permission to read message history in {channel.name} (Guild: {guild.name})")
-                except Exception as e:
-                    print(f"  Error fetching messages in {channel.name} (Guild: {guild.name}): {e}")
-    print("Message fetching complete.")
-    # --- End of message fetching ---
     weekly_quote.start()
 
+
 @bot.event
-async def on_reaction_add(reaction, user):
-    if user.bot:
+async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
+    # Ignore reactions from the bot itself
+    if payload.user_id == bot.user.id:
         return
 
-    message = reaction.message
-    print(f"Attempting to fetch message: {message.id} in channel: {message.channel.id}")  # add this
+    # Get the guild, channel, and message objects
+    guild = bot.get_guild(payload.guild_id)
+    if not guild:
+        print(f"Guild not found: {payload.guild_id}")
+        return
+    channel = guild.get_channel(payload.channel_id)
+    if not channel:
+        print(f"Channel not found: {payload.channel_id}")
+        return
+
     try:
-        message = await message.channel.fetch_message(message.id)
-        print(f"Successfully fetched message: {message.id}")  # add this
+        message = await channel.fetch_message(payload.message_id)
     except discord.NotFound:
-        print(f"Message not found: {message.id}")
+        print(f"Message not found: {payload.message_id}")
         return
     except discord.Forbidden:
-        print(f"Bot lacks permission to fetch message: {message.id}")
+        print(f"Bot lacks permission to fetch message: {payload.message_id}")
         return
     except discord.HTTPException as e:
-        print(f"HTTP error fetching message: {message.id} - {e}")
+        print(f"HTTP error fetching message: {payload.message_id} - {e}")
         return
 
-    # --- ADD BOT CHECK HERE ---
+    # Prevent quoting bots
     if message.author.bot:
         print(f"Ignoring reaction on bot message: {message.id}")
-        return  # Exit if the message author is a bot
+        return
 
-    # Check if REACTION_EMOJI is an integer (custom emoji ID) or a string (standard emoji)
-    if isinstance(REACTION_EMOJI, int):
-        # Custom emoji: Use bot.get_emoji()
-        if reaction.emoji == bot.get_emoji(REACTION_EMOJI):
+    # Check the emoji
+    if isinstance(REACTION_EMOJI, int):  # Custom Emoji
+        if payload.emoji.id == REACTION_EMOJI:
+             # Check for duplicate
             existing_quote = await database.get_quote_by_message_id(message.id)
-
             if existing_quote is None:
-                await database.add_quote(
-                    message.id, message.guild.id, message.channel.id, message.author.id,
-                    message.author.name, message.content, message.jump_url, user.id
-                )
+                await database.add_quote(message.id, guild.id, channel.id, message.author.id, message.author.name, message.content, message.jump_url, payload.user_id) #use payload.user_id
                 print(f"Quote added: {message.content}")
                 embed = await format_quote_embed(await database.get_quote_by_message_id(message.id))
                 if embed:
-                    await message.channel.send("Quote added!", embed=embed)
-
+                     await channel.send("Quote added!", embed=embed)
             else:
-                print(f"Quote already exists: {message.content}")
-    elif isinstance(REACTION_EMOJI, str):
-        # Standard emoji: Compare directly as strings
-        if str(reaction.emoji) == REACTION_EMOJI:
+                print("Quote already exists")
+    elif isinstance(REACTION_EMOJI, str):  # Standard Emoji
+        if payload.emoji.name == REACTION_EMOJI:
+            # Check for duplicate
             existing_quote = await database.get_quote_by_message_id(message.id)
-
             if existing_quote is None:
-                await database.add_quote(
-                    message.id, message.guild.id, message.channel.id, message.author.id,
-                    message.author.name, message.content, message.jump_url, user.id
-                )
+                await database.add_quote(message.id, guild.id, channel.id, message.author.id, message.author.name, message.content, message.jump_url, payload.user_id)  #use payload.user_id
                 print(f"Quote added: {message.content}")
                 embed = await format_quote_embed(await database.get_quote_by_message_id(message.id))
                 if embed:
-                   await message.channel.send("Quote added!", embed=embed)
+                    await channel.send("Quote added!", embed=embed)
             else:
-                print(f"Quote already exists: {message.content}")
-
+                print("Quote already exists")
     else:
-        print(f"Error: REACTION_EMOJI in config.py is of unexpected type: {type(REACTION_EMOJI)}")
+      print("Emoji configuration error")
+
 
 @bot.tree.command(name="randomquote", description="Displays a random quote.")
 async def randomquote(interaction: discord.Interaction):
@@ -138,17 +121,11 @@ async def randomquote(interaction: discord.Interaction):
 @bot.tree.command(name="search", description="Searches for quotes containing a specific term.")
 @app_commands.describe(term="The term to search for.")
 async def search(interaction: discord.Interaction, term: str):
-    print(f"Search command triggered. Term: {term}")  # Debug print
-
     quotes = await database.get_quotes_by_search_term(term)
-    print(f"Initial database results: {quotes}")  # Debug print
-
     if not quotes:
-        await interaction.response.send_message("No quotes found matching that term.", ephemeral=True)
-        return
-
+      await interaction.response.send_message("No quotes found matching that term.", ephemeral=True)
+      return
     fuzzy_results = utils.fuzzy_search(term, quotes, key=lambda q: q[6], threshold=50) # q[6] is the content
-    print(f"Fuzzy search results: {fuzzy_results}")  # Debug print
 
     if not fuzzy_results:
         await interaction.response.send_message("No quotes found matching that term.", ephemeral=True)
@@ -175,6 +152,7 @@ async def search(interaction: discord.Interaction, term: str):
     view = discord.ui.View()
     view.add_item(select)
     await interaction.response.send_message("Search Results:", view=view, ephemeral=True)
+
 @bot.tree.command(name="search_author", description="Searches for quotes by a specific author.")
 @app_commands.describe(author_name="The name of the author to search for.")
 async def search_author(interaction: discord.Interaction, author_name: str):
@@ -209,6 +187,30 @@ async def search_author(interaction: discord.Interaction, author_name: str):
     view = discord.ui.View()
     view.add_item(select)
     await interaction.response.send_message("Search Results:", view=view, ephemeral=True)
+
+@bot.tree.command(name="deletequote", description="Delete a quote that you added or authored, or if you have the admin role.")
+@app_commands.describe(message_link="The link to the original message of the quote.")
+async def deletequote(interaction: discord.Interaction, message_link: str):
+    try:
+      # Extract message ID from the jump URL.  Robust handling of different URL formats.
+        message_id = int(message_link.split('/')[-1])
+    except (ValueError, IndexError):
+        await interaction.response.send_message("Invalid message link format. Please provide a valid Discord message link.", ephemeral=True)
+        return
+
+    quote = await database.get_quote_by_message_id(message_id)
+    if not quote:
+        await interaction.response.send_message("Quote not found.", ephemeral=True)
+        return
+
+    quote_id, message_id, guild_id, channel_id, author_id, author_name, content, jump_url, adder_user_id, added_at = quote
+    # Check if the user has permission to delete the quote
+    is_admin = any(role.name == ADMIN_ROLE_NAME for role in interaction.user.roles)
+    if interaction.user.id == adder_user_id or interaction.user.id == author_id or is_admin :
+        await database.delete_quote(message_id)
+        await interaction.response.send_message("Quote deleted successfully!", ephemeral=True)
+    else:
+        await interaction.response.send_message("You don't have permission to delete this quote.", ephemeral=True)
 
 @bot.tree.command(name="manual_add", description="Manually add a quote using a message link.")
 @app_commands.describe(message_link="The link to the Discord message.")
@@ -267,30 +269,6 @@ async def manual_add(interaction: discord.Interaction, message_link: str):
     embed = await format_quote_embed(await database.get_quote_by_message_id(message.id))
     if embed:
         await interaction.response.send_message("Quote added!", embed=embed)
-
-@bot.tree.command(name="deletequote", description="Delete a quote that you added or authored, or if you have the admin role.")
-@app_commands.describe(message_link="The link to the original message of the quote.")
-async def deletequote(interaction: discord.Interaction, message_link: str):
-    try:
-      # Extract message ID from the jump URL.  Robust handling of different URL formats.
-        message_id = int(message_link.split('/')[-1])
-    except (ValueError, IndexError):
-        await interaction.response.send_message("Invalid message link format. Please provide a valid Discord message link.", ephemeral=True)
-        return
-
-    quote = await database.get_quote_by_message_id(message_id)
-    if not quote:
-        await interaction.response.send_message("Quote not found.", ephemeral=True)
-        return
-
-    quote_id, message_id, guild_id, channel_id, author_id, author_name, content, jump_url, adder_user_id, added_at = quote
-    # Check if the user has permission to delete the quote
-    is_admin = any(role.name == ADMIN_ROLE_NAME for role in interaction.user.roles)
-    if interaction.user.id == adder_user_id or interaction.user.id == author_id or is_admin :
-        await database.delete_quote(message_id)
-        await interaction.response.send_message("Quote deleted successfully!", ephemeral=True)
-    else:
-        await interaction.response.send_message("You don't have permission to delete this quote.", ephemeral=True)
 
 @tasks.loop(time=time(hour=12, minute=0, second=0, tzinfo=timezone.utc)) # 12:00 PM UTC
 async def weekly_quote():
