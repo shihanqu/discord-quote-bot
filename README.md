@@ -1,6 +1,6 @@
 **Discord Quote Bot**
 
-This bot allows users to save, manage, and share memorable quotes from your Discord server. It provides features for adding quotes via reactions and a manual command, robust searching, and a weekly automated quote.
+This bot allows users to save, manage, and share memorable quotes from your Discord server. It provides features for adding quotes via reactions and a manual command, robust searching, and displaying a weekly automated quote.
 
 **Features:**
 
