@@ -74,6 +74,7 @@ This bot allows users to save, manage, and share memorable quotes from your Disc
 
    ```
    pip install discord.py aiosqlite fuzzywuzzy python-dateutil python-Levenshtein
+   pip install --upgrade certifi
    ```
 
    
